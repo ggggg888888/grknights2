@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>塔防</title>
+<style>
+:root{--bg:#12141a;--sf:#1c1f28;--sm:#232735;--bd:#2e3446;--tp:#e8eaf0;--ts:#9aa3b2;--tt:#6b7385;--dg:#ff5b5b;--ps:#3ecf8e;--wn:#ffb84d;--c1:#5b9dff;--c2:#ff6b6b;--c4:#b58cff}
+*{box-sizing:border-box;margin:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans SC",sans-serif;background:var(--bg);color:var(--tp);min-height:100vh;display:flex;justify-content:center;padding:16px}
+#wrap{width:100%;max-width:640px;user-select:none;-webkit-user-select:none}
+button{font:inherit}
+.tb{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.stat{font-size:14px;color:var(--ts);font-variant-numeric:tabular-nums}
+.stat b{color:var(--tp);font-weight:500}
+.ops{display:flex;gap:8px;margin-bottom:12px}
+.opbtn{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 4px;border:1px solid var(--bd);border-radius:10px;background:var(--sf);cursor:pointer;color:var(--tp);transition:all .12s ease-out}
+.opbtn:hover{border-color:var(--tt)}
+.opbtn.sel{border-color:var(--tp);background:var(--sm)}
+.opbtn.dis{opacity:.4;cursor:not-allowed}
+.opbtn .e{font-size:26px;line-height:1}
+.opbtn .n{font-size:12px;color:var(--ts)}
+.cwrap{position:relative}
+canvas{display:block;width:100%;height:auto;border:1px solid var(--bd);border-radius:12px;background:var(--sf);cursor:pointer;touch-action:none}
+.hint{font-size:12px;color:var(--tt);margin:10px 0 0;min-height:16px}
+.panel{display:none;margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--sf);align-items:center;gap:12px}
+.panel.on{display:flex}
+.panel .pi{flex:1;font-size:13px;color:var(--ts)}
+.pbtn{padding:8px 14px;border-radius:8px;border:1px solid var(--tp);background:var(--tp);color:var(--bg);cursor:pointer;font-size:13px;white-space:nowrap}
+.pbtn.ghost{background:transparent;color:var(--tp)}
+.pbtn.dis{opacity:.4;cursor:not-allowed}
+.over{display:none;position:absolute;inset:0;align-items:center;justify-content:center;background:rgba(18,20,26,.88);border-radius:12px}
+.over.on{display:flex}
+.overbox{text-align:center}
+.overbox .k{font-size:44px;font-weight:500;font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div class="tb">
+    <span style="font-size:17px;font-weight:500">塔防</span>
+    <span class="stat">费用 <b id="uCost">10</b></span>
+    <span class="stat">击杀 <b id="uKill">0</b></span>
+    <span class="stat">波次 <b id="uWave">0</b></span>
+    <span class="stat">时间 <b id="uTime">00:00</b></span>
+    <span class="stat">🐟加成 <b id="uBuff">+0</b></span>
+  </div>
+  <div class="ops">
+    <button class="opbtn" id="bDove"><span class="e">🕊️</span><span class="n">🕊️ 15费</span></button>
+    <button class="opbtn" id="bFish"><span class="e">🐟</span><span class="n">🐟 5费</span></button>
+    <button class="opbtn" id="bGoose"><span class="e">🪿</span><span class="n">🪿 10费</span></button>
+  </div>
+  <div class="cwrap">
+    <canvas id="cv" width="588" height="328"></canvas>
+    <div class="over" id="over"><div class="overbox">
+      <div style="font-size:17px;font-weight:500">防线被突破</div>
+      <div style="font-size:13px;color:var(--ts);margin:8px 0 12px">最终击杀</div>
+      <div class="k" id="oKill">0</div>
+      <button class="pbtn" style="margin-top:16px" onclick="restart()">重新开始</button>
+    </div></div>
+  </div>
+  <div class="hint" id="hint">点干员按钮，再点左侧 5 列格子部署；点已部署的干员可开技能或撤退</div>
+  <div class="panel" id="panel">
+    <div class="pi" id="pInfo"></div>
+    <button class="pbtn" id="pSkill">开技能</button>
+    <button class="pbtn ghost" id="pRetreat">撤退 (+3费)</button>
+  </div>
+</div>
+<script>
+const CELL=52,M=8,ROWS=6,COLS=11;
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+const COST={dove:15,fish:5,goose:10},SKCOST={dove:55,goose:45,fish:60},SKDUR={dove:30,goose:45,fish:30};
+const C={tp:'#e8eaf0',ts:'#9aa3b2',tt:'#6b7385',tq:'#4a5165',bd:'#2e3446',sm:'#232735',dg:'#ff5b5b',ps:'#3ecf8e',wn:'#ffb84d',c1:'#5b9dff',c2:'#ff6b6b',c4:'#b58cff'};
+let S,uid=0;
+function newState(){return{cost:10,kills:0,time:0,over:false,hpBonus:0,ksb:0,bossLv:0,nextBoss:325,wave:0,spawnT:0,pending:[],units:[],enemies:[],placing:null,sel:null};}
+S=newState();
+function fishN(){return S.units.filter(u=>u.t==='fish').length}
+function buff(){return fishN()*2}
+function restart(){S=newState();document.getElementById('over').classList.remove('on');document.getElementById('panel').classList.remove('on');}
+document.getElementById('over').addEventListener('click',e=>e.stopPropagation());
+function spawnEnemy(boss){const hp=boss?(799+325*(S.bossLv-1)):(50+S.hpBonus);
+ S.enemies.push({id:uid++,row:Math.floor(Math.random()*ROWS),x:10.9,hp,maxHp:hp,boss:!!boss,root:0,flash:0});}
+function spawnWave(){S.wave++;for(let i=0;i<S.wave;i++)S.pending.push({t:i*0.4,boss:false});}
+function spawnBoss(){S.bossLv++;for(let i=0;i<S.bossLv;i++)S.pending.push({t:i*0.5,boss:true});}
+function onKill(){S.kills++;S.ksb++;if(S.ksb>=10){S.ksb-=10;S.hpBonus+=10;S.enemies.forEach(e=>{e.hp+=10;e.maxHp+=10;});}
+ while(S.kills>=S.nextBoss){spawnBoss();S.nextBoss+=325;}}
+function deploy(t,r,c){if(S.cost<COST[t])return;S.cost-=COST[t];S.units.push({id:uid++,t,row:r,col:c,tm:0,sk:0});}
+function fire(u){const b=buff();
+ if(u.t==='dove'){const rows=[u.row-1,u.row,u.row+1];
+  let tgt=null,tx=1e9;S.enemies.forEach(e=>{if(rows.includes(e.row)&&e.x>u.col+0.3&&e.x<tx){tx=e.x;tgt=e;}});
+  if(!tgt)return;const sk=u.sk>0,atk=sk?50:5+b,r=sk?1.6:1.0;
+  S.enemies.forEach(e=>{if(Math.abs(e.x-tgt.x)<=r&&Math.abs(e.row-tgt.row)<=r){e.hp-=atk;e.flash=0.15;}});}
+ else if(u.t==='goose'){
+  if(u.sk>0){const ts=S.enemies.slice().sort((a,b)=>a.x-b.x).slice(0,10);
+   ts.forEach(e=>{e.hp-=(2+b);e.flash=0.15;e.root=S.time+45;});}
+  else{let tgt=null,tx=1e9;S.enemies.forEach(e=>{if(e.row===u.row&&e.x>u.col+0.3&&e.x<tx){tx=e.x;tgt=e;}});
+   if(!tgt)return;tgt.hp-=(2+b);tgt.flash=0.15;}}}
+function update(dt){if(S.over)return;
+ S.time+=dt;S.cost+=0.5*dt;S.cost+=2*dt*fishN();
+ S.spawnT+=dt;if(S.spawnT>=5){S.spawnT-=5;spawnWave();}
+ for(let i=S.pending.length-1;i>=0;i--){S.pending[i].t-=dt;if(S.pending[i].t<=0){spawnEnemy(S.pending[i].boss);S.pending.splice(i,1);}}
+ const bleed=S.units.filter(u=>u.t==='fish'&&u.sk>0).length;
+ S.enemies.forEach(e=>{if(bleed)e.hp-=30*bleed*dt;if(e.flash>0)e.flash-=dt;});
+ S.units.forEach(u=>{if(u.sk>0)u.sk-=dt;if(u.t==='fish')return;u.tm+=dt;
+  const iv=u.t==='goose'?0.5:1;
+  while(u.tm>=iv){u.tm-=iv;fire(u);}});
+ for(let i=S.enemies.length-1;i>=0;i--){const e=S.enemies[i];
+  if(S.time>=e.root)e.x-=0.5*dt;
+  if(e.hp<=0){S.enemies.splice(i,1);onKill();}
+  else if(e.x<=0.2){S.over=true;document.getElementById('oKill').textContent=S.kills;document.getElementById('over').classList.add('on');}}
+ if(S.sel&&!S.units.includes(S.sel))S.sel=null;}
+function cellXY(r,c){return[M+c*CELL+CELL/2,M+r*CELL+CELL/2]}
+function draw(){ctx.clearRect(0,0,cv.width,cv.height);
+ ctx.fillStyle=C.sm;ctx.fillRect(M,M,5*CELL,ROWS*CELL);
+ ctx.globalAlpha=0.15;ctx.fillStyle=C.dg;ctx.fillRect(M,M,6,ROWS*CELL);ctx.globalAlpha=1;
+ ctx.strokeStyle=C.bd;ctx.lineWidth=1;
+ for(let c=0;c<=COLS;c++){ctx.beginPath();ctx.moveTo(M+c*CELL,M);ctx.lineTo(M+c*CELL,M+ROWS*CELL);ctx.stroke();}
+ for(let r=0;r<=ROWS;r++){ctx.beginPath();ctx.moveTo(M,M+r*CELL);ctx.lineTo(M+COLS*CELL,M+r*CELL);ctx.stroke();}
+ ctx.fillStyle=C.dg;ctx.font='10px sans-serif';ctx.textAlign='center';
+ ctx.save();ctx.translate(M+12,M+ROWS*CELL/2);ctx.rotate(-Math.PI/2);ctx.fillText('防御点',0,0);ctx.restore();
+ if(S.placing){ctx.fillStyle=C.c1;ctx.globalAlpha=0.13;ctx.fillRect(M,M,5*CELL,ROWS*CELL);ctx.globalAlpha=1;}
+ S.enemies.forEach(e=>{const px=M+e.x*CELL+CELL/2,py=M+e.row*CELL+CELL/2;
+  ctx.beginPath();ctx.arc(px,py,e.boss?17:11,0,7);ctx.fillStyle=e.flash>0?'#ffffff':(e.boss?C.c4:C.c2);ctx.fill();
+  ctx.font=(e.boss?'24px ':'17px ')+'sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(e.boss?'👹':'👾',px,py+1);ctx.textBaseline='alphabetic';
+  const w=e.boss?34:24;ctx.fillStyle=C.tq;ctx.fillRect(px-w/2,py-(e.boss?28:22),w,3);
+  ctx.fillStyle=C.ps;ctx.fillRect(px-w/2,py-(e.boss?28:22),w*Math.max(0,e.hp/e.maxHp),3);
+  if(S.time<e.root){ctx.fillStyle=C.wn;ctx.font='10px sans-serif';ctx.fillText('定',px,py-(e.boss?34:27));}});
+ S.units.forEach(u=>{const px=cellXY(u.row,u.col)[0],py=cellXY(u.row,u.col)[1];
+  if(S.sel===u){ctx.strokeStyle=C.tp;ctx.lineWidth=2;ctx.beginPath();ctx.arc(px,py,20,0,7);ctx.stroke();ctx.lineWidth=1;}
+  if(u.sk>0){ctx.strokeStyle=C.c1;ctx.lineWidth=2;ctx.beginPath();ctx.arc(px,py,23,-Math.PI/2,-Math.PI/2+Math.PI*2*(u.sk/SKDUR[u.t]));ctx.stroke();ctx.lineWidth=1;}
+  ctx.font='26px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(u.t==='dove'?'🕊️':u.t==='fish'?'🐟':'🪿',px,py+1);ctx.textBaseline='alphabetic';
+  if(u.sk>0){ctx.fillStyle=C.c1;ctx.font='10px sans-serif';ctx.fillText(Math.ceil(u.sk)+'s',px,py-26);}});}
+function hud(){document.getElementById('uCost').textContent=Math.floor(S.cost);
+ document.getElementById('uKill').textContent=S.kills;
+ document.getElementById('uWave').textContent=S.wave;
+ const t=Math.floor(S.time);document.getElementById('uTime').textContent=String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0');
+ document.getElementById('uBuff').textContent='+'+buff();
+ [['bDove','dove'],['bFish','fish'],['bGoose','goose']].forEach(x=>{const b=document.getElementById(x[0]);
+  b.classList.toggle('sel',S.placing===x[1]);b.classList.toggle('dis',S.cost<COST[x[1]]);});
+ const p=document.getElementById('panel');
+ if(S.sel){p.classList.add('on');const u=S.sel;
+  const info={dove:'🕊️ 攻击力 '+(u.sk>0?'50':'5')+(u.sk>0?'（4×4）':'（3×3）')+'｜技能55费：攻50、4×4、30s',
+   fish:'🐟 每秒+2费，全场🕊️🪿攻击+2｜技能60费：全场怪每秒流失30生命，30s',
+   goose:'🪿 攻击力 '+(2+buff())+'（单体，每秒2次）｜技能45费：全图攻击定身，45s'}[u.t];
+  document.getElementById('pInfo').textContent=(u.sk>0?('技能生效中 '+Math.ceil(u.sk)+'s｜'):'')+info;
+  const sb=document.getElementById('pSkill');sb.textContent='开技能（'+SKCOST[u.t]+'费）';
+  sb.classList.toggle('dis',u.sk>0||S.cost<SKCOST[u.t]);}
+ else p.classList.remove('on');}
+document.getElementById('bDove').onclick=()=>{S.placing=S.placing==='dove'?null:'dove';S.sel=null;};
+document.getElementById('bFish').onclick=()=>{S.placing=S.placing==='fish'?null:'fish';S.sel=null;};
+document.getElementById('bGoose').onclick=()=>{S.placing=S.placing==='goose'?null:'goose';S.sel=null;};
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+cv.addEventListener('click',e=>{if(S.over)return;const rc=cv.getBoundingClientRect();
+ const mx=(e.clientX-rc.left)*cv.width/rc.width,my=(e.clientY-rc.top)*cv.height/rc.height;
+ const c=Math.floor((mx-M)/CELL),r=Math.floor((my-M)/CELL);
+ if(r<0||r>=ROWS)return;
+ if(S.placing){if(c>=0&&c<5){deploy(S.placing,r,c);if(S.cost<COST[S.placing])S.placing=null;}return;}
+ S.sel=S.units.find(u=>u.row===r&&u.col===c)||null;});
+document.getElementById('pSkill').onclick=()=>{const u=S.sel;if(!u||u.sk>0||S.cost<SKCOST[u.t])return;S.cost-=SKCOST[u.t];u.sk=SKDUR[u.t];};
+document.getElementById('pRetreat').onclick=()=>{const u=S.sel;if(!u)return;S.units.splice(S.units.indexOf(u),1);S.cost+=3;S.sel=null;};
+let last=performance.now();
+function loop(now){const dt=Math.min(0.05,(now-last)/1000);last=now;update(dt);draw();hud();requestAnimationFrame(loop);}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
